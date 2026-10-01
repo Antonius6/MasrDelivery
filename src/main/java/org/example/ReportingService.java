@@ -140,6 +140,86 @@ public class ReportingService {
                 .collect(Collectors.groupingBy(Order::getDeliveryDistrict,Collectors.summingDouble(Order::getTotal)));
     }
 
+    public List<Restaurant> getTopRatedActiveRestaurants() {
+        Map<Restaurant, Long> completedOrdersCount = orders.stream()
+                .filter(o -> o.getStatus() == OrderStatus.DELIVERED)
+                .collect(Collectors.groupingBy(Order::getRestaurant, Collectors.counting()));
+
+        return restaurants.stream()
+                .filter(r -> r.getRating() > 4.5)
+                .filter(r -> completedOrdersCount.getOrDefault(r, 0L) >= 20)
+                .collect(Collectors.toList());
+    }
+
+    public Map<Rider, Double> getRiderDeliveryStats() {
+        Map<Rider, List<Order>> ordersByRider = orders.stream()
+                .filter(o -> o.getStatus() == OrderStatus.DELIVERED && o.getAssignedRider() != null)
+                .collect(Collectors.groupingBy(Order::getAssignedRider));
+
+        return riders.stream()
+                .sorted(Comparator.comparing(Rider::getCountCompletedDeliveries).reversed())
+                .collect(Collectors.toMap(
+                        rider -> rider,
+                        rider -> ordersByRider.getOrDefault(rider, List.of()).stream()
+                                .filter(o -> o.getDeliveredAt() != null)
+                                .mapToLong(o -> java.time.Duration.between(o.getPlacedAt(), o.getDeliveredAt()).toMinutes())
+                                .average()
+                                .orElse(0.0),
+                        (a, b) -> a,
+                        LinkedHashMap::new
+                ));
+    }
+
+    public List<Order> getCustomerOrderHistory(Customer customer) {
+        return orders.stream()
+                .filter(o -> o.getCustomer().equals(customer))
+                .sorted(Comparator.comparing(Order::getPlacedAt).reversed())
+                .toList();
+    }
+
+    public double getCustomerTotalSpent(Customer customer) {
+        return orders.stream()
+                .filter(o -> o.getCustomer().equals(customer) && o.getStatus() == OrderStatus.DELIVERED)
+                .mapToDouble(Order::getTotal)
+                .sum();
+    }
+
+    public Optional<Integer> getPeakOrderingHour() {
+        return orders.stream()
+                .collect(Collectors.groupingBy(o -> o.getPlacedAt().getHour(), Collectors.counting()))
+                .entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey);
+    }
+
+    public List<Customer> getInactiveCustomers(int days) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
+        Map<Customer, LocalDateTime> lastOrderByCustomer = orders.stream()
+                .collect(Collectors.toMap(
+                        Order::getCustomer,
+                        Order::getPlacedAt,
+                        (a, b) -> a.isAfter(b) ? a : b
+                ));
+
+        return customers.stream()
+                .filter(c -> {
+                    LocalDateTime last = lastOrderByCustomer.get(c);
+                    return last == null || last.isBefore(cutoff);
+                })
+                .collect(Collectors.toList());
+    }
+
+    public Optional<MenuItem> getMostPopularItem() {
+        return orders.stream()
+                .filter(order -> order.getStatus() == OrderStatus.DELIVERED)
+                .flatMap(order -> order.getLineItems().stream())
+                .collect(Collectors.groupingBy(
+                        OrderLineItem::getMenuItem,
+                        Collectors.summingDouble(OrderLineItem::getQuantityOrWeight)
+                ))
+                .entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey);
+    }
 
 }
-

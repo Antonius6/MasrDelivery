@@ -1,5 +1,7 @@
 package org.example;
 
+import java.util.function.Predicate;
+
 public class RestaurantSearchCriteria {
 
     private final District district;
@@ -23,7 +25,7 @@ public class RestaurantSearchCriteria {
         this.textQuery = builder.textQuery;
     }
 
-   public static class Builder {
+    public static class Builder {
         private District district;
         private String cuisine;
         private Double price;
@@ -65,12 +67,12 @@ public class RestaurantSearchCriteria {
             if(minRating>5.0 || minRating<0.0){
                 throw new IllegalArgumentException("minRating must be between 0.0 and 5.0");
             }
-           this.minRating = minRating;
-           return this;
+            this.minRating = minRating;
+            return this;
         }
 
         public RestaurantSearchCriteria build() {
-           return new RestaurantSearchCriteria(this);
+            return new RestaurantSearchCriteria(this);
         }
     }
 
@@ -96,5 +98,29 @@ public class RestaurantSearchCriteria {
 
     public String getTextQuery() {
         return textQuery;
+    }
+
+    public Predicate<Restaurant> toPredicate() {
+        Predicate<Restaurant> predicate = r -> true;
+        if (openOnly) {
+            predicate = predicate.and(Restaurant::isOpen);
+        }
+        if (district != null) {
+            predicate = predicate.and(r -> r.getDistrict() == district);
+        }
+        if (cuisine != null) {
+            predicate = predicate.and(r -> r.getCuisines().stream().anyMatch(c -> c.equalsIgnoreCase(cuisine)));
+        }
+        if (minRating != null) {
+            predicate = predicate.and(r -> r.getRating() >= minRating);
+        }
+        if (price != null) {
+            predicate = predicate.and(r -> r.getMenu().values().stream().anyMatch(item -> item.getPrice() <= price));
+        }
+        if (textQuery != null) {
+            predicate = predicate.and(r -> r.getName().toLowerCase().contains(textQuery) ||
+                    r.getCuisines().stream().anyMatch(c -> c.toLowerCase().contains(textQuery)));
+        }
+        return predicate;
     }
 }

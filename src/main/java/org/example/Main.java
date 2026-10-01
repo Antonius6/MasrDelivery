@@ -22,6 +22,7 @@ public class Main {
         Map<String, Rider> riders = new HashMap<>();
         Map<String, Promotion> promotions = new HashMap<>();
         SearchService searchService = new SearchService();
+        DispatchService dispatchService = new DispatchService();
 
 
         int option;
@@ -30,8 +31,8 @@ public class Main {
             option = readInt(in);
             switch (option) {
                 case 1 -> customerMenu(in, restaurants, customers, searchService, orders, promotions, globalObservers);
-                case 2 -> restaurantMenu(in, restaurants, orders);
-                case 3 -> riderMenu(in, riders, orders);
+                case 2 -> restaurantMenu(in, restaurants, orders, dispatchService);
+                case 3 -> riderMenu(in, riders, orders, dispatchService);
                 case 4 -> adminMenu(in, customers, restaurants, riders, orders, promotions);
 
             }
@@ -100,12 +101,20 @@ public class Main {
             case 1 -> {
                 try {
                     System.out.println("\n--- Search & Browse Restaurant ---");
+
+                    System.out.println("Enter your customer ID (or press Enter to skip): ");
+                    String searchCustomerId = readString(in);
+                    Customer searchingCustomer = searchCustomerId.isBlank() ? null : customers.get(searchCustomerId);
+
                     RestaurantSearchCriteria.Builder builder = new RestaurantSearchCriteria.Builder();
 
                     System.out.println("Enter search keyword  or press Enter to skip : ");
                     String query = readString(in);
                     if (!query.isBlank()) {
                         builder.textQuery(query);
+                        if (searchingCustomer != null) {
+                            searchingCustomer.addRecentSearch(query);
+                        }
                     }
 
                     System.out.println("Show open restaurant only? (y/n)");
@@ -382,7 +391,7 @@ public class Main {
 
     }
 
-    static void restaurantMenu(Scanner in, Map<String, Restaurant> restaurants, Map<String, Order> orders) {
+    static void restaurantMenu(Scanner in, Map<String, Restaurant> restaurants, Map<String, Order> orders, DispatchService dispatchService) {
         System.out.println("========================================");
         System.out.println("RESTAURANT MENU");
         System.out.println("========================================");
@@ -544,6 +553,7 @@ public class Main {
                             }
                             case 3 -> {
                                 targetOrder.transitionStatus(OrderStatus.READY);
+                                dispatchService.addReadyOrder(targetOrder);
                                 System.out.println("Order " + orderId + " is now READY for rider pickup.");
                             }
                             case 4 -> {
@@ -617,7 +627,7 @@ public class Main {
         }
     }
 
-    static void riderMenu(Scanner in, Map<String, Rider> riders, Map<String, Order> orders) {
+    static void riderMenu(Scanner in, Map<String, Rider> riders, Map<String, Order> orders, DispatchService dispatchService) {
         System.out.println("========================================");
         System.out.println("              RIDER MENU                ");
         System.out.println("========================================");
@@ -645,45 +655,29 @@ public class Main {
 
             switch (choice) {
                 case 1 -> {
-                    System.out.println("--- READY Orders ---");
-                    List<Order> readyOrders = orders.values().stream()
-                            .filter(o -> o.getStatus() == OrderStatus.READY)
-                            .toList();
+                    System.out.println("--- Dispatch Next READY Order ---");
+                    Order orderToPick = dispatchService.getReadyOrder();
 
-                    if (readyOrders.isEmpty()) {
+                    if (orderToPick == null) {
                         System.out.println("No orders ready for pickup at the moment.");
                         break;
                     }
 
-                    readyOrders.forEach(o ->
-                            System.out.println("Order ID: " + o.getOrderId() + " | Delivery Fee: " + o.getDeliveryFee() + " EGP")
-                    );
+                    try {
+                        double distanceKm = orderToPick.getDistanceKm();
+                        System.out.println("Enter total weight (kg) for this order: ");
+                        double weightKg = readDouble(in);
 
-                    System.out.println("Enter Order ID to pick up (or press Enter to skip): ");
-                    String orderId = readString(in);
+                        currentRider.assignOrder(orderToPick, distanceKm, weightKg);
 
-                    if (!orderId.isBlank()) {
-                        Order orderToPick = orders.get(orderId);
+                        orderToPick.setAssignedRider(currentRider);
+                        orderToPick.transitionStatus(OrderStatus.ASSIGNED);
+                        orderToPick.transitionStatus(OrderStatus.OUT_FOR_DELIVERY);
 
-                        if (orderToPick != null && orderToPick.getStatus() == OrderStatus.READY) {
-                            try {
-                                double distanceKm = orderToPick.getDistanceKm();
-                                System.out.println("Enter total weight (kg) for this order: ");
-                                double weightKg = readDouble(in);
-
-                                currentRider.assignOrder(orderToPick, distanceKm, weightKg);
-
-                                orderToPick.setAssignedRider(currentRider);
-                                orderToPick.transitionStatus(OrderStatus.ASSIGNED);
-                                orderToPick.transitionStatus(OrderStatus.OUT_FOR_DELIVERY);
-
-                                System.out.println(" Order " + orderId + " is now OUT FOR DELIVERY!");
-                            } catch (IllegalArgumentException | RiderAlreadyBusyException | OrderIllegalTransitions e) {
-                                System.out.println(" Failed to assign order: " + e.getMessage());
-                            }
-                        } else {
-                            System.out.println("Invalid Order ID or Order is not READY.");
-                        }
+                        System.out.println(" Order " + orderToPick.getOrderId() + " is now OUT FOR DELIVERY!");
+                    } catch (IllegalArgumentException | RiderAlreadyBusyException | OrderIllegalTransitions e) {
+                        dispatchService.addReadyOrder(orderToPick);
+                        System.out.println(" Failed to assign order: " + e.getMessage());
                     }
                 }
                 case 2 -> {
@@ -782,6 +776,12 @@ public class Main {
             System.out.println("7. Add Rider");
             System.out.println("8. Create New Promotion");
             System.out.println("9. View All Cuisine Categories");
+            System.out.println("10. Restaurants Rated Above 4.5 With 20+ Orders");
+            System.out.println("11. Rider Delivery Stats");
+            System.out.println("12. Peak Ordering Hour");
+            System.out.println("13. Inactive Customers (30+ Days)");
+            System.out.println("14. Most Popular Menu Item");
+            System.out.println("15. Customer Order History");
             System.out.println("0. Back to Main Menu");
             System.out.print("Choose an option: ");
 
@@ -990,6 +990,69 @@ public class Main {
                     } else {
                         cuisines.forEach(c -> System.out.println("- " + c));
                     }
+                }
+                case 10 -> {
+                    System.out.println("--- Restaurants Rated Above 4.5 With 20+ Completed Orders ---");
+                    List<Restaurant> topRestaurants = reportingService.getTopRatedActiveRestaurants();
+                    if (topRestaurants.isEmpty()) {
+                        System.out.println("No restaurant currently meets this criteria.");
+                    } else {
+                        topRestaurants.forEach(r -> System.out.println("- " + r.getName() + " | Rating: " + r.getRating()));
+                    }
+                }
+                case 11 -> {
+                    System.out.println("--- Rider Delivery Stats ---");
+                    Map<Rider, Double> stats = reportingService.getRiderDeliveryStats();
+                    if (stats.isEmpty()) {
+                        System.out.println("No riders registered yet.");
+                    } else {
+                        stats.forEach((rider, avgMinutes) ->
+                                System.out.println(rider.getRiderName() + " | Deliveries: " + rider.getCountCompletedDeliveries() + " | Avg Duration: " + avgMinutes + " mins"));
+                    }
+                }
+                case 12 -> {
+                    System.out.println("--- Peak Ordering Hour ---");
+                    Optional<Integer> peakHour = reportingService.getPeakOrderingHour();
+                    if (peakHour.isPresent()) {
+                        System.out.println("Peak ordering hour: " + peakHour.get() + ":00");
+                    } else {
+                        System.out.println("No orders have been placed yet.");
+                    }
+                }
+                case 13 -> {
+                    System.out.println("--- Customers Inactive For 30+ Days ---");
+                    List<Customer> inactive = reportingService.getInactiveCustomers(30);
+                    if (inactive.isEmpty()) {
+                        System.out.println("No inactive customers found.");
+                    } else {
+                        inactive.forEach(c -> System.out.println("- " + c.getCustomerName() + " (" + c.getCustomerID() + ")"));
+                    }
+                }
+                case 14 -> {
+                    System.out.println("--- Most Popular Menu Item ---");
+                    Optional<MenuItem> popular = reportingService.getMostPopularItem();
+                    if (popular.isPresent()) {
+                        System.out.println("Most popular item: " + popular.get().getName());
+                    } else {
+                        System.out.println("No orders have been delivered yet, so there is no popular item.");
+                    }
+                }
+                case 15 -> {
+                    System.out.println("--- Customer Order History ---");
+                    System.out.println("Enter customer ID: ");
+                    String historyCustomerId = readString(in);
+                    Customer historyCustomer = customers.get(historyCustomerId);
+                    if (historyCustomer == null) {
+                        System.out.println("Customer with id " + historyCustomerId + " not found");
+                        break;
+                    }
+                    List<Order> history = reportingService.getCustomerOrderHistory(historyCustomer);
+                    if (history.isEmpty()) {
+                        System.out.println("This customer has no orders yet.");
+                    } else {
+                        history.forEach(o -> System.out.println(o.getOrderId() + " | " + o.getStatus() + " | " + o.getPlacedAt() + " | " + o.getTotal() + " EGP"));
+                    }
+                    System.out.println("Total Spent: " + reportingService.getCustomerTotalSpent(historyCustomer) + " EGP");
                 }
                 case 0 -> System.out.println("Returning to Main Menu...");
                 default -> System.out.println("Invalid choice. Please try again.");
